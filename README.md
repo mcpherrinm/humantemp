@@ -10,12 +10,14 @@ temperature with gridded population on a common lat/lon grid.
   **percentile lines** (e.g. 95 → the 5th and 95th percentile temperatures of the selection).
 - **Daily-swing heatmap**: a 2D histogram of each place-day's overnight low vs daytime high,
   shaded (white→black) by people-days — points far above the diagonal are big daily swings.
-- Filters applied to all panels: **°C/°F**, weight by **population** (person-hours) or
-  **land area** (km²-hours), and restrict to **continents** or a **lat/lon box**.
+- Filters applied to all panels: weight by **population** (person-hours) or **land area**
+  (km²-hours), and restrict to **continents** or a **lat/lon box**.
 
-Everything the page needs is precomputed into `data/*.json`; all aggregation runs in the browser.
-Colour is reserved for absolute temperature (blue→red); every other magnitude — population,
-daily range, people-days — is grayscale so it never reads as a temperature.
+Both **°C and °F** are shown at once — dual axes on the charts, and paired labels everywhere
+else. Everything the page needs is precomputed into `data/*.json`; all aggregation runs in the
+browser. Colour is reserved for absolute temperature — a diverging scale **centered on 0 °C**
+(blue below freezing, red above) — while every other magnitude (population, daily range,
+people-days) is grayscale so it never reads as a temperature.
 
 ## Data sources (all free, no account required)
 
