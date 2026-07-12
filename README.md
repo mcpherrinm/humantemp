@@ -4,7 +4,8 @@ A static, client-side visualization of **person-hours by temperature**: for ever
 year, how many people worldwide were experiencing each air temperature. Combines hourly ERA5
 temperature with gridded population on a common lat/lon grid.
 
-- **Map** of the globe coloured by mean temperature, **mean daily range**, or population. Drag to
+- **Map** of the globe with selectable views: mean temperature, **mean daily high**, **mean daily
+  low**, **annual maximum**, **annual minimum**, **mean daily range**, or population. Drag to
   select a box; hover a chart bar to see where that temperature is felt.
 - **Distribution** of person-hours across temperature, with a slider that draws symmetric
   **percentile lines** (e.g. 95 → the 5th and 95th percentile temperatures of the selection).

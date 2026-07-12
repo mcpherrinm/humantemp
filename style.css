@@ -37,6 +37,10 @@ section { margin-top: 30px; }
               font-size: 13px; cursor: pointer; border-left: 1px solid var(--line-strong); }
 .seg button:first-child { border-left: 0; }
 .seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.sel { font: inherit; font-size: 13px; color: var(--ink); background: #fff; border: 1px solid var(--line-strong);
+       border-radius: 5px; padding: 5px 26px 5px 10px; cursor: pointer; -webkit-appearance: none; appearance: none;
+       background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23666'/></svg>");
+       background-repeat: no-repeat; background-position: right 9px center; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { border: 1px solid var(--line-strong); background: #fff; color: var(--muted);

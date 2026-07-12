@@ -34,6 +34,15 @@ function grayShade(frac) { // white(0) -> near-black(1); for non-temperature mag
 }
 const RANGE_MAX = 18; // °C, top of the mean-daily-range grayscale
 
+// map views. The temperature-coloured ones map to a per-cell °C field; 'range'
+// and 'pop' are grayscale magnitudes handled separately.
+const TEMPVIEW = { temp: "tmean", mdhigh: "mdhigh", mdlow: "mdlow", tmax: "tmax", tmin: "tmin" };
+const VIEW_LABEL = {
+  temp: "Mean temperature", mdhigh: "Mean daily high", mdlow: "Mean daily low",
+  tmax: "Annual maximum", tmin: "Annual minimum",
+  range: "Mean daily range (high − low)", pop: "Population per cell",
+};
+
 // ---------------------------------------------------------------------------
 // Units. Data is stored in °C and both scales are shown together. Absolute
 // temperatures use toF; a temperature *difference* (daily range) uses toFd
@@ -199,7 +208,7 @@ function drawMap() {
     } else if (state.mapview === "range") {
       ctx.fillStyle = grayShade(C.drange[k] / RANGE_MAX);
     } else {
-      ctx.fillStyle = rgb(tempColor(C.tmean[k]));
+      ctx.fillStyle = rgb(tempColor(C[TEMPVIEW[state.mapview]][k]));
     }
     ctx.fillRect(x, y, cw, ch);
   }
@@ -386,7 +395,7 @@ function updateLegend() {
     bar.style.background = "linear-gradient(90deg, #fff, #141414)";
     ticks.innerHTML = `<span>0°</span><span>${fmtD(RANGE_MAX)}+</span>`;
   } else {
-    label.textContent = "Mean temperature";
+    label.textContent = VIEW_LABEL[state.mapview] || "Mean temperature";
     tempLegend(bar, ticks);
   }
 }
@@ -396,7 +405,7 @@ function updateLegend() {
 // ---------------------------------------------------------------------------
 function buildControls() {
   seg("weight", (v) => { state.weight = v; update(); });
-  seg("mapview", (v) => { state.mapview = v; drawMap(); });
+  $("mapview").onchange = (e) => { state.mapview = e.target.value; drawMap(); };
   const box = $("continents");
   META.continents.forEach((name, i) => {
     const b = document.createElement("button");
@@ -463,7 +472,7 @@ function wireMap() {
       const k = nearestCell(p.lon, p.lat);
       if (k >= 0) {
         ro.style.opacity = 1;
-        ro.textContent = `${fmtLat(C.lat[k])}, ${fmtLon(C.lon[k])} · ${(C.pop[k] / 1e6).toFixed(2)} M · mean ${fmtT(C.tmean[k], 1)} · daily range ${fmtD(C.drange[k], 1)}`;
+        ro.textContent = `${fmtLat(C.lat[k])}, ${fmtLon(C.lon[k])} · ${(C.pop[k] / 1e6).toFixed(2)} M · ${metricAt(k)}`;
       }
     }
   });
@@ -494,6 +503,14 @@ function nearestCell(lon, lat) {
 }
 const fmtLat = (v) => Math.abs(v).toFixed(1) + (v >= 0 ? "°N" : "°S");
 const fmtLon = (v) => Math.abs(v).toFixed(1) + (v >= 0 ? "°E" : "°W");
+
+function metricAt(k) { // the currently-mapped statistic, for the hover readout
+  const v = state.mapview;
+  if (v === "range") return `daily range ${fmtD(C.drange[k], 1)}`;
+  const label = { temp: "mean", mdhigh: "mean daily high", mdlow: "mean daily low",
+                  tmax: "annual max", tmin: "annual min" }[v] || "mean";
+  return `${label} ${fmtT(C[TEMPVIEW[v] || "tmean"][k], 1)}`;
+}
 
 function wireChart() {
   const cv = $("chart"), ro = $("chart-readout");

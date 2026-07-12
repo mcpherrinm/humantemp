@@ -172,7 +172,10 @@ def temperature_hist(deg, year, stride, days, nbins, nbins2, inc_flat):
     acc = np.zeros((ncell, nbins), dtype=np.int32)          # hours per (cell,bin)
     tsum = np.zeros(ncell, dtype=np.float64)
     acc2d = np.zeros((ninc, nbins2, nbins2), dtype=np.int16)  # days per (min,max) bin
-    rangesum = np.zeros(ninc, dtype=np.float64)               # sum of daily ranges
+    sumhigh = np.zeros(ninc, dtype=np.float64)  # sum of daily highs   -> mean daily high
+    sumlow = np.zeros(ninc, dtype=np.float64)   # sum of daily lows    -> mean daily low
+    amax = np.full(ninc, -np.inf)               # annual max (hottest hour of the year)
+    amin = np.full(ninc, np.inf)                # annual min (coldest hour of the year)
     ndays = 0
     incar = np.arange(ninc, dtype=np.int64)
     hours_per_sample = stride
@@ -196,7 +199,10 @@ def temperature_hist(deg, year, stride, days, nbins, nbins2, inc_flat):
         if nd:
             day = coarse[:nd, inc_flat].reshape(nd // spd, spd, ninc)  # (days,spd,ninc)
             dmin, dmax = day.min(axis=1), day.max(axis=1)              # (days,ninc)
-            rangesum += (dmax - dmin).sum(axis=0)
+            sumhigh += dmax.sum(axis=0)
+            sumlow += dmin.sum(axis=0)
+            amax = np.maximum(amax, dmax.max(axis=0))
+            amin = np.minimum(amin, dmin.min(axis=0))
             ndays += nd // spd
             mnb = np.clip(((dmin - TMIN) / BINW2).astype(np.int64), 0, nbins2 - 1)
             mxb = np.clip(((dmax - TMIN) / BINW2).astype(np.int64), 0, nbins2 - 1)
@@ -209,9 +215,12 @@ def temperature_hist(deg, year, stride, days, nbins, nbins2, inc_flat):
 
     acc *= hours_per_sample             # samples -> hours
     tmean = tsum / nT                   # mean Celsius per cell
-    drange = rangesum / max(ndays, 1)   # mean daily range (deg C) per included cell
+    nd = max(ndays, 1)
+    mdhigh, mdlow = sumhigh / nd, sumlow / nd    # mean daily high / low
+    daily = {"drange": mdhigh - mdlow, "mdhigh": mdhigh, "mdlow": mdlow,
+             "tmax": amax, "tmin": amin}         # all aligned to inc_flat order
     return (acc.reshape(nlat, nlon, nbins), tmean.reshape(nlat, nlon),
-            nT * hours_per_sample, acc2d, drange)
+            nT * hours_per_sample, acc2d, daily)
 
 
 # --------------------------------------------------------------------------- #
@@ -242,7 +251,7 @@ def main():
     inc_flat = np.where(include.ravel())[0]      # row-major flat indices of kept cells
     cont_idx = fill_missing_continents(cont_idx.copy(), include)
 
-    hist, tmean, hours_total, acc2d, drange = temperature_hist(
+    hist, tmean, hours_total, acc2d, dstat = temperature_hist(
         deg, args.year, args.stride, args.days, nbins, nbins2, inc_flat)
 
     # Emit cells columnar + run-length histograms (first non-zero bin + counts).
@@ -250,6 +259,7 @@ def main():
     # key = minBin * nbins2 + maxBin. Same cell ordering as the columns below.
     lat_i, lon_i = np.where(include)
     lats, lons, pops, conts, tmeans, dranges = [], [], [], [], [], []
+    mdhighs, mdlows, tmaxs, tmins = [], [], [], []
     t0s, hists, daily = [], [], []
     for k, (i, j) in enumerate(zip(lat_i.tolist(), lon_i.tolist())):
         h = hist[i, j]
@@ -263,7 +273,11 @@ def main():
         c = cont_idx[i, j]
         conts.append(int(c) if np.isfinite(c) else -1)
         tmeans.append(round(float(tmean[i, j]), 1))
-        dranges.append(round(float(drange[k]), 1))
+        dranges.append(round(float(dstat["drange"][k]), 1))
+        mdhighs.append(round(float(dstat["mdhigh"][k]), 1))
+        mdlows.append(round(float(dstat["mdlow"][k]), 1))
+        tmaxs.append(round(float(dstat["tmax"][k]), 1))
+        tmins.append(round(float(dstat["tmin"][k]), 1))
         t0s.append(a)
         hists.append(h[a:b].astype(int).tolist())
         mn, mx = np.nonzero(acc2d[k])
@@ -290,7 +304,8 @@ def main():
         json.dump(meta, f)
     cells = {
         "lat": lats, "lon": lons, "pop": pops, "cont": conts,
-        "tmean": tmeans, "drange": dranges, "t0": t0s, "hist": hists,
+        "tmean": tmeans, "drange": dranges, "mdhigh": mdhighs, "mdlow": mdlows,
+        "tmax": tmaxs, "tmin": tmins, "t0": t0s, "hist": hists,
     }
     with open(os.path.join(args.out, "cells.json"), "w") as f:
         json.dump(cells, f, separators=(",", ":"))

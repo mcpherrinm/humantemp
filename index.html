@@ -26,11 +26,15 @@
       </div>
       <div class="ctl">
         <span>Map shows</span>
-        <div class="seg" id="mapview">
-          <button data-v="temp" aria-pressed="true">Mean temperature</button>
-          <button data-v="range">Daily range</button>
-          <button data-v="pop">Population</button>
-        </div>
+        <select class="sel" id="mapview">
+          <option value="temp">Mean temperature</option>
+          <option value="mdhigh">Mean daily high</option>
+          <option value="mdlow">Mean daily low</option>
+          <option value="tmax">Annual maximum</option>
+          <option value="tmin">Annual minimum</option>
+          <option value="range">Daily range</option>
+          <option value="pop">Population</option>
+        </select>
       </div>
       <div class="ctl">
         <span>Continents</span>
