@@ -66,6 +66,11 @@
   <section>
     <h2>Distribution of person-hours by temperature</h2>
     <div class="stats" id="stats"></div>
+    <div class="pctl">
+      <span>Percentile band</span>
+      <input type="range" id="pct" min="51" max="99" value="95" step="1">
+      <span id="pct-label"></span>
+    </div>
     <div class="mapbox" style="border:0">
       <canvas id="chart"></canvas>
       <div class="readout" id="chart-readout"></div>

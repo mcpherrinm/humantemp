@@ -58,6 +58,7 @@ let state = {
   box: null,                    // {latMin,latMax,lonMin,lonMax}
   hoverBin: null,               // highlighted temperature bin (distribution hover)
   heatHover: null,              // {mn,mx} highlighted daily-range cell
+  pct: 95,                      // upper percentile; band is (100-pct)..pct
 };
 
 const $ = (id) => document.getElementById(id);
@@ -115,6 +116,25 @@ function distribution() {
 }
 
 const binTemp = (b) => META.tmin + (b + 0.5) * META.binw;   // bin center, Celsius
+
+// temperature at cumulative fraction `frac` of a weighted histogram (interpolated)
+function pctTemp(bins, total, frac) {
+  const target = frac * total;
+  let cum = 0;
+  for (let b = 0; b < bins.length; b++) {
+    if (cum + bins[b] >= target) {
+      const pos = bins[b] > 0 ? (target - cum) / bins[b] : 0;
+      return META.tmin + (b + pos) * META.binw;
+    }
+    cum += bins[b];
+  }
+  return META.tmax;
+}
+function ordinal(n) {
+  const t = n % 100, u = n % 10;
+  const s = (t >= 11 && t <= 13) ? "th" : u === 1 ? "st" : u === 2 ? "nd" : u === 3 ? "rd" : "th";
+  return n + s;
+}
 
 function fmtBig(x, unit) {
   const a = Math.abs(x);
@@ -271,6 +291,19 @@ function drawChart() {
   }
   ctx.fillStyle = "#999"; ctx.textAlign = "left";
   ctx.fillText("air temperature (" + uSym() + ")", padL, padT + plotH + 14);
+
+  // symmetric percentile lines: slider P -> lines at (100-P) and P.
+  // Labels point inward and sit on two rows so they never overlap or clip.
+  const P = state.pct;
+  ctx.font = "11px system-ui, sans-serif"; ctx.textBaseline = "top";
+  const rows = [padT + 1, padT + 15];
+  for (const [frac, pc, side, row] of [[(100 - P) / 100, 100 - P, 1, 0], [P / 100, P, -1, 1]]) {
+    const T = pctTemp(bins, total, frac), x = xpos(T);
+    ctx.strokeStyle = "#222"; ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke();
+    ctx.fillStyle = "#222"; ctx.textAlign = side > 0 ? "left" : "right";
+    ctx.fillText(`${ordinal(pc)} · ${fmtT(T)}`, x + side * 4, rows[row]);
+  }
 }
 
 function niceTicks(max, n) {
@@ -380,10 +413,19 @@ function buildControls() {
   };
   box.appendChild(all);
 
+  const slider = $("pct");
+  slider.value = state.pct;
+  slider.oninput = () => { state.pct = +slider.value; updatePctLabel(); drawChart(); };
+  updatePctLabel();
+
   $("clearbox").onclick = (e) => { e.preventDefault(); state.box = null; $("clearbox").style.display = "none"; update(); };
   wireMap();
   wireChart();
   wireHeat();
+}
+
+function updatePctLabel() {
+  $("pct-label").textContent = `${ordinal(100 - state.pct)} – ${ordinal(state.pct)} percentile`;
 }
 
 function seg(id, cb) {

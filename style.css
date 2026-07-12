@@ -59,6 +59,12 @@ canvas { display: block; width: 100%; }
 .legend .bar { height: 10px; width: 220px; border: 1px solid var(--line); }
 .legend .ticks { display: flex; justify-content: space-between; width: 220px; }
 
+/* percentile slider */
+.pctl { display: flex; align-items: center; gap: 10px; margin: -2px 0 14px; }
+.pctl > span:first-child { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
+.pctl input[type="range"] { width: 150px; accent-color: #222; cursor: pointer; }
+.pctl #pct-label { font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+
 /* stats */
 .stats { display: flex; flex-wrap: wrap; gap: 26px; margin-bottom: 14px; }
 .stat .n { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }

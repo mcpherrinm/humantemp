@@ -6,7 +6,8 @@ temperature with gridded population on a common lat/lon grid.
 
 - **Map** of the globe coloured by mean temperature, **mean daily range**, or population. Drag to
   select a box; hover a chart bar to see where that temperature is felt.
-- **Distribution** of person-hours across temperature.
+- **Distribution** of person-hours across temperature, with a slider that draws symmetric
+  **percentile lines** (e.g. 95 → the 5th and 95th percentile temperatures of the selection).
 - **Daily-swing heatmap**: a 2D histogram of each place-day's overnight low vs daytime high,
   shaded (white→black) by people-days — points far above the diagonal are big daily swings.
 - Filters applied to all panels: **°C/°F**, weight by **population** (person-hours) or
