@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The temperatures humans live in</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>The temperatures humans live in</h1>
+    <p>Every hour of 2024, how many people were experiencing each air temperature — combining
+       hourly ERA5 temperature with gridded population, worldwide.</p>
+    <p class="src" id="src"></p>
+  </header>
+
+  <section id="controls-sec">
+    <div class="controls">
+      <div class="ctl">
+        <span>Weight distribution by</span>
+        <div class="seg" id="weight">
+          <button data-v="pop" aria-pressed="true">Population</button>
+          <button data-v="area">Land area</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span>Map shows</span>
+        <div class="seg" id="mapview">
+          <button data-v="temp" aria-pressed="true">Mean temperature</button>
+          <button data-v="pop">Population</button>
+        </div>
+      </div>
+      <div class="ctl">
+        <span>Continents</span>
+        <div class="chips" id="continents"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where on the globe</h2>
+    <div class="mapbox">
+      <canvas id="map"></canvas>
+      <div class="readout" id="readout"></div>
+    </div>
+    <div class="legend" id="legend">
+      <span id="legend-label">Mean temperature</span>
+      <div>
+        <div class="bar" id="legend-bar"></div>
+        <div class="ticks" id="legend-ticks"></div>
+      </div>
+    </div>
+    <p class="hint">Drag on the map to restrict to a box. Hover a bar in the chart below to see where that
+       temperature is felt. <a href="#" id="clearbox" style="display:none">Clear box</a></p>
+  </section>
+
+  <section>
+    <h2>Distribution of person-hours by temperature</h2>
+    <div class="stats" id="stats"></div>
+    <div class="mapbox" style="border:0">
+      <canvas id="chart"></canvas>
+      <div class="readout" id="chart-readout"></div>
+    </div>
+  </section>
+
+  <footer>
+    Temperature: ERA5 hourly 2&nbsp;m air temperature (ECMWF/Copernicus, via ARCO-ERA5).
+    Population: GHS-POP 2020 (EU JRC). Land &amp; continents: Natural Earth.
+    Built for GitHub Pages — all computation runs in your browser.
+    <a href="https://github.com" id="repo-link" style="display:none"></a>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

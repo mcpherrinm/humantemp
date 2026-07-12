@@ -1,0 +1,1 @@
+{"year": 2024, "deg": 1.0, "stride_hours": 1, "hours_total": 8784, "tmin": -70.0, "tmax": 56.0, "binw": 1.0, "nbins": 126, "continents": ["Africa", "Antarctica", "Asia", "Europe", "North America", "Oceania", "South America"], "ncells": 24099, "source": "ERA5 (ARCO-ERA5, ECMWF/Copernicus) + GHS-POP 2020 (EU JRC) + Natural Earth"}

@@ -1,0 +1,9 @@
+# Data pipeline for humantemp. Install with: pip install -r requirements.txt
+numpy
+requests
+rasterio          # read the GHS-POP GeoTIFF
+xarray
+zarr
+gcsfs             # anonymous access to ARCO-ERA5 on Google Cloud Storage
+regionmask        # rasterize continent polygons onto the grid
+geopandas         # load the Natural Earth continents GeoJSON
