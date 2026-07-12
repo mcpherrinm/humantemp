@@ -18,6 +18,13 @@
   <section id="controls-sec">
     <div class="controls">
       <div class="ctl">
+        <span>Units</span>
+        <div class="seg" id="unit">
+          <button data-v="C" aria-pressed="true">°C</button>
+          <button data-v="F">°F</button>
+        </div>
+      </div>
+      <div class="ctl">
         <span>Weight distribution by</span>
         <div class="seg" id="weight">
           <button data-v="pop" aria-pressed="true">Population</button>
@@ -28,6 +35,7 @@
         <span>Map shows</span>
         <div class="seg" id="mapview">
           <button data-v="temp" aria-pressed="true">Mean temperature</button>
+          <button data-v="range">Daily range</button>
           <button data-v="pop">Population</button>
         </div>
       </div>
@@ -61,6 +69,24 @@
     <div class="mapbox" style="border:0">
       <canvas id="chart"></canvas>
       <div class="readout" id="chart-readout"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Daily swing — overnight low vs daytime high</h2>
+    <p class="hint">Each place-day plotted by its daily low (horizontal) and daily high (vertical),
+      shaded by people-days. Points far above the diagonal have big daily swings (deserts);
+      points hugging it barely change (humid tropics, oceans' influence).</p>
+    <div class="mapbox" id="heatbox" style="border:0; max-width:440px">
+      <canvas id="heat"></canvas>
+      <div class="readout" id="heat-readout"></div>
+    </div>
+    <div class="legend" id="heat-legend">
+      <span id="heat-legend-label">People-days</span>
+      <div>
+        <div class="bar" id="heat-legend-bar"></div>
+        <div class="ticks"><span>few</span><span>many</span></div>
+      </div>
     </div>
   </section>
 

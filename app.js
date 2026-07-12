@@ -28,18 +28,36 @@ function popColor(frac) { // grayscale, light -> dark
   const g = Math.round(lerp(238, 24, Math.max(0, Math.min(1, frac))));
   return `rgb(${g},${g},${g})`;
 }
+function grayShade(frac) { // white(0) -> near-black(1); for non-temperature magnitudes
+  const g = Math.round(255 - 235 * Math.max(0, Math.min(1, frac)));
+  return `rgb(${g},${g},${g})`;
+}
+const RANGE_MAX = 18; // °C, top of the mean-daily-range grayscale
+
+// ---------------------------------------------------------------------------
+// Units. Data is stored in °C; convert only at display time. Absolute
+// temperatures use toDisp; temperature *differences* (daily range) use toDelta.
+// ---------------------------------------------------------------------------
+const toDisp = (c) => (state.unit === "F" ? c * 9 / 5 + 32 : c);
+const fromDisp = (d) => (state.unit === "F" ? (d - 32) * 5 / 9 : d);
+const toDelta = (c) => (state.unit === "F" ? c * 9 / 5 : c);
+const uSym = () => "°" + state.unit;
+const fmtT = (c, dp = 0) => toDisp(c).toFixed(dp) + uSym();
+const fmtD = (c, dp = 0) => toDelta(c).toFixed(dp) + uSym();
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let META, C, N;                 // metadata, cells (columnar), cell count
+let META, C, N, DAILY;          // metadata, cells (columnar), cell count, daily 2D
 let AREA;                       // per-cell area weight (km^2)
 let state = {
+  unit: "C",                    // 'C' | 'F'
   weight: "pop",                // 'pop' | 'area'
-  mapview: "temp",              // 'temp' | 'pop'
+  mapview: "temp",              // 'temp' | 'range' | 'pop'
   continents: new Set(),        // active continent indices
   box: null,                    // {latMin,latMax,lonMin,lonMax}
-  hoverBin: null,
+  hoverBin: null,               // highlighted temperature bin (distribution hover)
+  heatHover: null,              // {mn,mx} highlighted daily-range cell
 };
 
 const $ = (id) => document.getElementById(id);
@@ -48,9 +66,10 @@ const $ = (id) => document.getElementById(id);
 // Load
 // ---------------------------------------------------------------------------
 async function load() {
-  [META, C] = await Promise.all([
+  [META, C, DAILY] = await Promise.all([
     fetch("data/meta.json").then((r) => r.json()),
     fetch("data/cells.json").then((r) => r.json()),
+    fetch("data/daily.json").then((r) => r.json()),
   ]);
   N = C.lat.length;
   const R2 = 6371 * 6371, d = (META.deg * Math.PI) / 180;
@@ -63,7 +82,7 @@ async function load() {
     `${META.ncells.toLocaleString()} cells at ${META.deg}°, ` +
     `${META.hours_total.toLocaleString()} hours of ${META.year}. Source: ${META.source}.`;
   buildControls();
-  window.addEventListener("resize", () => { drawMap(); drawChart(); });
+  window.addEventListener("resize", () => { drawMap(); drawChart(); drawHeat(); });
   update();
 }
 
@@ -156,6 +175,8 @@ function drawMap() {
       ctx.fillStyle = "#ededed";
     } else if (state.mapview === "pop") {
       ctx.fillStyle = C.pop[k] > 0 ? popColor(Math.log(1 + C.pop[k]) / logMax) : "#f2f2f2";
+    } else if (state.mapview === "range") {
+      ctx.fillStyle = grayShade(C.drange[k] / RANGE_MAX);
     } else {
       ctx.fillStyle = rgb(tempColor(C.tmean[k]));
     }
@@ -234,20 +255,22 @@ function drawChart() {
     if (b === state.hoverBin) { ctx.strokeStyle = "#111"; ctx.lineWidth = 1; ctx.strokeRect(x + 0.4, y, Math.max(1, bw - 0.8), bh); }
   }
 
-  // x axis: temperature labels + 0C marker
+  // freezing marker (0°C = 32°F), drawn at its bin position regardless of ticks
+  const xpos = (c) => bx((c - META.tmin) / META.binw - 0.5) + bw / 2;
+  ctx.strokeStyle = "rgba(0,0,0,0.22)"; ctx.beginPath();
+  ctx.moveTo(xpos(0), padT); ctx.lineTo(xpos(0), padT + plotH); ctx.stroke();
+
+  // x axis: temperature labels in the display unit
   ctx.strokeStyle = "#ccc"; ctx.beginPath();
   ctx.moveTo(padL, padT + plotH); ctx.lineTo(w - padR, padT + plotH); ctx.stroke();
   ctx.fillStyle = "#666"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const step = (hi - lo) > 70 ? 20 : 10;
-  for (let t = Math.ceil(binTemp(lo) / step) * step; t <= binTemp(hi); t += step) {
-    const b = (t - META.tmin) / META.binw - 0.5;
-    const x = bx(b) + bw / 2;
-    ctx.fillStyle = t === 0 ? "#111" : "#666";
-    ctx.fillText(t + "°", x, padT + plotH + 5);
-    if (t === 0) { ctx.strokeStyle = "rgba(0,0,0,0.25)"; ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke(); }
+  const dLo = toDisp(binTemp(lo)), dHi = toDisp(binTemp(hi));
+  const dStep = (dHi - dLo) > 90 ? (state.unit === "F" ? 40 : 20) : (state.unit === "F" ? 20 : 10);
+  for (let td = Math.ceil(dLo / dStep) * dStep; td <= dHi; td += dStep) {
+    ctx.fillText(td + "°", xpos(fromDisp(td)), padT + plotH + 5);
   }
   ctx.fillStyle = "#999"; ctx.textAlign = "left";
-  ctx.fillText("air temperature", padL, padT + plotH + 14);
+  ctx.fillText("air temperature (" + uSym() + ")", padL, padT + plotH + 14);
 }
 
 function niceTicks(max, n) {
@@ -264,6 +287,7 @@ function niceTicks(max, n) {
 function update() {
   drawMap();
   drawChart();
+  drawHeat();
   const { bins } = distribution();
   const nb = META.nbins;
   // total exposure = person-hours (or km²-hours); this is the correct denominator
@@ -284,10 +308,10 @@ function update() {
     ? (selPop() / 1e9).toFixed(2) + " B people"
     : (selArea() / 1e6).toFixed(1) + " M km²";
   const pct = (x) => totPH ? (100 * x / totPH).toFixed(1) + "%" : "–";
-  $("stats").innerHTML = stat(mean.toFixed(1) + "°C", "mean temperature experienced")
-    + stat((median == null ? "–" : median.toFixed(0) + "°C"), "median")
-    + stat(pct(above30), "of " + unit + " above 30°C")
-    + stat(pct(below0), "below 0°C")
+  $("stats").innerHTML = stat(fmtT(mean, 1), "mean temperature experienced")
+    + stat((median == null ? "–" : fmtT(median)), "median")
+    + stat(pct(above30), "of " + unit + " above " + fmtT(30))
+    + stat(pct(below0), "below " + fmtT(0))
     + stat(totLabel, "in selection");
 }
 function stat(n, l) { return `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`; }
@@ -297,24 +321,34 @@ function selArea() { let s = 0; for (let k = 0; k < N; k++) if (passes(k)) s += 
 // ---------------------------------------------------------------------------
 // Legend
 // ---------------------------------------------------------------------------
+function tempLegend(bar, ticks) {
+  const stops = [];
+  for (let i = 0; i <= 10; i++) {
+    const c = tempColor(TEMP_DOMAIN[0] + (i / 10) * (TEMP_DOMAIN[1] - TEMP_DOMAIN[0]));
+    stops.push(rgb(c) + " " + i * 10 + "%");
+  }
+  bar.style.background = `linear-gradient(90deg, ${stops.join(",")})`;
+  const a = toDisp(TEMP_DOMAIN[0]), b = toDisp(TEMP_DOMAIN[1]);
+  ticks.innerHTML = `<span>${a | 0}°</span><span>${(a + b) / 2 | 0}°</span><span>${b | 0}°+</span>`;
+}
+
 function updateLegend() {
   const bar = $("legend-bar"), ticks = $("legend-ticks"), label = $("legend-label");
-  if (state.mapview === "pop" && state.hoverBin == null) {
+  if (state.hoverBin != null) {
+    const t = binTemp(state.hoverBin);
+    label.textContent = `Where ${toDisp(t - META.binw / 2).toFixed(0)}–${toDisp(t + META.binw / 2).toFixed(0)}${uSym()} is felt`;
+    tempLegend(bar, ticks);
+  } else if (state.mapview === "pop") {
     label.textContent = "Population per cell";
-    bar.style.background = "linear-gradient(90deg, #eee, #181818)";
+    bar.style.background = "linear-gradient(90deg, #fff, #181818)";
     ticks.innerHTML = "<span>low</span><span>high</span>";
+  } else if (state.mapview === "range") {
+    label.textContent = "Mean daily range (high − low)";
+    bar.style.background = "linear-gradient(90deg, #fff, #141414)";
+    ticks.innerHTML = `<span>0°</span><span>${toDelta(RANGE_MAX).toFixed(0)}°+</span>`;
   } else {
-    const t = state.hoverBin != null ? binTemp(state.hoverBin) : null;
-    label.textContent = t != null
-      ? `Where ${(t - META.binw / 2).toFixed(0)}–${(t + META.binw / 2).toFixed(0)}°C is felt`
-      : "Mean temperature";
-    const stops = [];
-    for (let i = 0; i <= 10; i++) {
-      const c = tempColor(TEMP_DOMAIN[0] + (i / 10) * (TEMP_DOMAIN[1] - TEMP_DOMAIN[0]));
-      stops.push(rgb(c) + " " + i * 10 + "%");
-    }
-    bar.style.background = `linear-gradient(90deg, ${stops.join(",")})`;
-    ticks.innerHTML = `<span>${TEMP_DOMAIN[0]}°</span><span>${(TEMP_DOMAIN[0] + TEMP_DOMAIN[1]) / 2 | 0}°</span><span>${TEMP_DOMAIN[1]}°+</span>`;
+    label.textContent = "Mean temperature";
+    tempLegend(bar, ticks);
   }
 }
 
@@ -322,6 +356,7 @@ function updateLegend() {
 // Controls + interaction
 // ---------------------------------------------------------------------------
 function buildControls() {
+  seg("unit", (v) => { state.unit = v; update(); });
   seg("weight", (v) => { state.weight = v; update(); });
   seg("mapview", (v) => { state.mapview = v; drawMap(); });
   const box = $("continents");
@@ -348,6 +383,7 @@ function buildControls() {
   $("clearbox").onclick = (e) => { e.preventDefault(); state.box = null; $("clearbox").style.display = "none"; update(); };
   wireMap();
   wireChart();
+  wireHeat();
 }
 
 function seg(id, cb) {
@@ -380,7 +416,7 @@ function wireMap() {
       const k = nearestCell(p.lon, p.lat);
       if (k >= 0) {
         ro.style.opacity = 1;
-        ro.textContent = `${fmtLat(C.lat[k])}, ${fmtLon(C.lon[k])} · ${(C.pop[k] / 1e6).toFixed(2)} M · mean ${C.tmean[k].toFixed(1)}°C`;
+        ro.textContent = `${fmtLat(C.lat[k])}, ${fmtLon(C.lon[k])} · ${(C.pop[k] / 1e6).toFixed(2)} M · mean ${fmtT(C.tmean[k], 1)} · daily range ${fmtD(C.drange[k], 1)}`;
       }
     }
   });
@@ -427,14 +463,121 @@ function wireChart() {
     const share = total ? (100 * bins[b] / total) : 0;
     const abs = fmtBig(bins[b], state.weight === "pop" ? "person-hours" : "km²-hours");
     ro.style.opacity = 1;
-    ro.style.left = Math.min(g.w - 150, x + 10) + "px";
-    ro.textContent = `${(binTemp(b) - META.binw / 2).toFixed(0)} to ${(binTemp(b) + META.binw / 2).toFixed(0)}°C · ${share.toFixed(1)}% · ${abs}`;
+    ro.style.left = Math.min(g.w - 160, x + 10) + "px";
+    ro.textContent = `${toDisp(binTemp(b) - META.binw / 2).toFixed(0)} to ${toDisp(binTemp(b) + META.binw / 2).toFixed(0)}${uSym()} · ${share.toFixed(1)}% · ${abs}`;
   });
   cv.addEventListener("mouseleave", clearHover);
   function clearHover() {
     if (state.hoverBin == null) return;
     state.hoverBin = null; ro.style.opacity = 0; drawMap(); drawChart();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Daily min/max heatmap: 2D histogram of (daily low, daily high) shaded by
+// people-days. Grayscale on purpose — this is a count, not a temperature.
+// ---------------------------------------------------------------------------
+const binTemp2 = (b) => META.tmin + (b + 0.5) * META.binw2;
+let heatState = null;
+
+function heatBins() {
+  const nb2 = META.nbins2, bins = new Float64Array(nb2 * nb2);
+  let max = 0, total = 0;
+  for (let k = 0; k < N; k++) {
+    if (!passes(k)) continue;
+    const w = wt(k);
+    if (w <= 0) continue;
+    const kv = DAILY.cell[k];
+    for (let p = 0; p < kv.length; p += 2) {
+      const v = (bins[kv[p]] += w * kv[p + 1]);
+      if (v > max) max = v;
+      total += w * kv[p + 1];
+    }
+  }
+  return { bins, max, total };
+}
+
+function drawHeat() {
+  const cv = $("heat");
+  const nb2 = META.nbins2;
+  const { bins, max } = heatBins();
+  const padL = 42, padR = 10, padT = 8, padB = 30;
+  const side = (cv.clientWidth || cv.parentElement.clientWidth) - padL - padR;
+  const { ctx, w, h } = fit(cv, side + padT + padB);
+  ctx.clearRect(0, 0, w, h);
+
+  // occupied temperature window (shared by both axes so the diagonal is 45°)
+  let gLo = nb2, gHi = 0;
+  for (let i = 0; i < bins.length; i++) if (bins[i] > 0) {
+    const mn = (i / nb2) | 0, mx = i % nb2;
+    if (mn < gLo) gLo = mn; if (mx > gHi) gHi = mx; if (mn > gHi) gHi = mn; if (mx < gLo) gLo = mx;
+  }
+  if (gLo > gHi) { heatState = null; updateHeatLegend(); return; }
+  gLo = Math.max(0, gLo - 1); gHi = Math.min(nb2 - 1, gHi + 1);
+  const span = gHi - gLo + 1, cell = side / span;
+  const xOf = (c) => padL + ((c - META.tmin) / META.binw2 - gLo) * cell;
+  const yOf = (c) => padT + side - ((c - META.tmin) / META.binw2 - gLo) * cell;
+  heatState = { bins, max, gLo, gHi, cell, padL, padT, side, w };
+  const lmax = Math.log(1 + max);
+
+  // cells
+  for (let mn = gLo; mn <= gHi; mn++) {
+    for (let mx = mn; mx <= gHi; mx++) {
+      const v = bins[mn * nb2 + mx];
+      if (v <= 0) continue;
+      const f = Math.pow(Math.log(1 + v) / lmax, 0.6);
+      ctx.fillStyle = grayShade(f);
+      ctx.fillRect(padL + (mn - gLo) * cell, padT + side - (mx - gLo + 1) * cell, cell + 0.5, cell + 0.5);
+    }
+  }
+  // diagonal (no daily swing) + plot border
+  ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(xOf(binTemp2(gLo)), yOf(binTemp2(gLo))); ctx.lineTo(xOf(binTemp2(gHi)), yOf(binTemp2(gHi))); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#ddd"; ctx.strokeRect(padL, padT, side, side);
+
+  // axes: ticks in display units, freezing lines emphasised
+  ctx.fillStyle = "#666"; ctx.font = "11px system-ui, sans-serif";
+  const dLo = toDisp(binTemp2(gLo)), dHi = toDisp(binTemp2(gHi));
+  const step = state.unit === "F" ? 20 : 10;
+  const cLo = binTemp2(gLo), cHi = binTemp2(gHi);
+  for (let td = Math.ceil(dLo / step) * step; td <= dHi; td += step) {
+    const c = fromDisp(td), gx = xOf(c), gy = yOf(c);
+    ctx.strokeStyle = td === toDisp(0) ? "rgba(0,0,0,0.18)" : "#f0f0f0";
+    ctx.beginPath(); ctx.moveTo(gx, padT); ctx.lineTo(gx, padT + side); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + side, gy); ctx.stroke();
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(td + "°", gx, padT + side + 5);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(td + "°", padL - 5, gy);
+  }
+  ctx.fillStyle = "#999"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.fillText("daily low (" + uSym() + ")", padL + side / 2, padT + side + 17);
+  ctx.save(); ctx.translate(11, padT + side / 2); ctx.rotate(-Math.PI / 2);
+  ctx.textBaseline = "middle"; ctx.fillText("daily high (" + uSym() + ")", 0, 0); ctx.restore();
+  updateHeatLegend();
+}
+
+function updateHeatLegend() {
+  $("heat-legend-bar").style.background = "linear-gradient(90deg, #fff, #141414)";
+  $("heat-legend-label").textContent = state.weight === "pop" ? "People-days" : "km²-days";
+}
+
+function wireHeat() {
+  const cv = $("heat"), ro = $("heat-readout");
+  cv.addEventListener("mousemove", (e) => {
+    if (!heatState) return;
+    const g = heatState, r = cv.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const mn = g.gLo + Math.floor((x - g.padL) / g.cell);
+    const mx = g.gLo + Math.floor((g.padT + g.side - y) / g.cell);
+    if (mn < g.gLo || mn > g.gHi || mx < g.gLo || mx > g.gHi || mx < mn) { ro.style.opacity = 0; return; }
+    const v = g.bins[mn * META.nbins2 + mx];
+    const lo = binTemp2(mn), hi = binTemp2(mx);
+    ro.style.opacity = 1;
+    ro.style.left = Math.min(g.w - 170, x + 12) + "px";
+    ro.style.top = Math.max(4, y - 34) + "px";
+    ro.textContent = `low ${toDisp(lo - META.binw2 / 2).toFixed(0)}–${toDisp(lo + META.binw2 / 2).toFixed(0)}°, high ${toDisp(hi - META.binw2 / 2).toFixed(0)}–${toDisp(hi + META.binw2 / 2).toFixed(0)}° · swing ~${fmtD(hi - lo)} · ${fmtBig(v, state.weight === "pop" ? "people-days" : "km²-days")}`;
+  });
+  cv.addEventListener("mouseleave", () => { ro.style.opacity = 0; });
 }
 
 load();

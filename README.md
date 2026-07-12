@@ -4,13 +4,17 @@ A static, client-side visualization of **person-hours by temperature**: for ever
 year, how many people worldwide were experiencing each air temperature. Combines hourly ERA5
 temperature with gridded population on a common lat/lon grid.
 
-- **Map** of the globe coloured by mean temperature (or population). Drag to select a box;
-  hover a chart bar to see where that temperature is felt.
-- **Distribution** of person-hours across temperature, with filters:
-  - weight by **population** (person-hours) or by **land area** (km²-hours),
-  - restrict to **continents** or a **lat/lon box**.
+- **Map** of the globe coloured by mean temperature, **mean daily range**, or population. Drag to
+  select a box; hover a chart bar to see where that temperature is felt.
+- **Distribution** of person-hours across temperature.
+- **Daily-swing heatmap**: a 2D histogram of each place-day's overnight low vs daytime high,
+  shaded (white→black) by people-days — points far above the diagonal are big daily swings.
+- Filters applied to all panels: **°C/°F**, weight by **population** (person-hours) or
+  **land area** (km²-hours), and restrict to **continents** or a **lat/lon box**.
 
 Everything the page needs is precomputed into `data/*.json`; all aggregation runs in the browser.
+Colour is reserved for absolute temperature (blue→red); every other magnitude — population,
+daily range, people-days — is grayscale so it never reads as a temperature.
 
 ## Data sources (all free, no account required)
 
@@ -37,8 +41,10 @@ python fetch_data.py --stride 3      # sample every 3rd hour (smaller download)
 python fetch_data.py --year 2023
 ```
 
-Outputs `data/meta.json` (grid + bin definitions) and `data/cells.json` (per-cell population,
-continent, mean temperature, and run-length hour-per-temperature-bin histogram).
+Outputs three files: `data/meta.json` (grid + bin definitions), `data/cells.json` (per-cell
+population, continent, mean temperature, mean daily range, and run-length
+hour-per-temperature-bin histogram), and `data/daily.json` (per-cell sparse 2D histogram of
+days by (daily-min, daily-max) 2 °C bins, aligned to the same cell order).
 
 ## Run locally
 
@@ -60,3 +66,7 @@ root. No build step. `.nojekyll` is included so all files are served as-is.
 - Temperature bins are 1 °C wide. Each cell stores hours spent in each bin over the year, so
   `person-hours(bin) = Σ population × hours` and `area-hours(bin) = Σ area × hours` are
   recomputed for any region filter in the browser.
+- Daily min/max are computed per calendar day from the same hourly stream, then binned into a
+  2 °C × 2 °C grid per cell (people-days = Σ population × days). Mean daily range is the
+  per-cell mean of (daily max − daily min). Temperature *differences* convert to °F as ×9/5
+  (no +32 offset); absolute temperatures as ×9/5 + 32.

@@ -50,6 +50,7 @@ OCEAN_LABEL = "Seven seas (open ocean)"
 
 # Temperature binning (degrees Celsius). Covers Earth's inhabited-plus range.
 TMIN, TMAX, BINW = -70.0, 56.0, 1.0
+BINW2 = 2.0   # bin width (deg C) for the daily min/max 2D histogram
 
 
 def log(msg):
@@ -148,7 +149,7 @@ def fill_missing_continents(cont_idx, include):
 # --------------------------------------------------------------------------- #
 # Temperature: stream ERA5 hourly, coarsen, accumulate per-cell histograms.
 # --------------------------------------------------------------------------- #
-def temperature_hist(deg, year, stride, days, nbins):
+def temperature_hist(deg, year, stride, days, nbins, nbins2, inc_flat):
     import xarray as xr
 
     ds = xr.open_zarr(ARCO, storage_options={"token": "anon"}, chunks=None)
@@ -160,15 +161,22 @@ def temperature_hist(deg, year, stride, days, nbins):
     if days:
         nT = min(nT, days * 24 // stride)
 
+    assert 24 % stride == 0, "stride must divide 24"
+    spd = 24 // stride                   # samples per day
     f = int(round(deg / 0.25))          # native cells per output cell
     nlat, nlon = 720 // f, 1440 // f
     ncell = nlat * nlon
     roll = 1440 // 2                     # shift lon 0..360 -> -180..180
+    ninc = len(inc_flat)
 
-    acc = np.zeros((ncell, nbins), dtype=np.int32)   # hours per (cell,bin)
+    acc = np.zeros((ncell, nbins), dtype=np.int32)          # hours per (cell,bin)
     tsum = np.zeros(ncell, dtype=np.float64)
+    acc2d = np.zeros((ninc, nbins2, nbins2), dtype=np.int16)  # days per (min,max) bin
+    rangesum = np.zeros(ninc, dtype=np.float64)               # sum of daily ranges
+    ndays = 0
+    incar = np.arange(ninc, dtype=np.int64)
     hours_per_sample = stride
-    B = 48
+    B = 48                              # multiple of spd for every valid stride
     t0 = time.time()
     log(f"Streaming {nT} timesteps of ERA5 (stride={stride}h) -> {nlat}x{nlon} grid")
     for start in range(0, nT, B):
@@ -178,10 +186,22 @@ def temperature_hist(deg, year, stride, days, nbins):
         coarse = block.reshape(n, nlat, f, nlon, f).mean(axis=(2, 4))  # (n,nlat,nlon) K
         coarse = coarse.reshape(n, ncell) - 273.15                     # -> Celsius
         tsum += coarse.sum(axis=0)
+        # 1D: hours in each temperature bin
         bins = np.clip(((coarse - TMIN) / BINW).astype(np.int64), 0, nbins - 1)
         cell = np.arange(ncell, dtype=np.int64)[None, :]
         lin = (cell * nbins + bins).ravel()
         acc += np.bincount(lin, minlength=ncell * nbins).reshape(ncell, nbins).astype(np.int32)
+        # daily: min/max per whole day, for the included cells only
+        nd = (n // spd) * spd
+        if nd:
+            day = coarse[:nd, inc_flat].reshape(nd // spd, spd, ninc)  # (days,spd,ninc)
+            dmin, dmax = day.min(axis=1), day.max(axis=1)              # (days,ninc)
+            rangesum += (dmax - dmin).sum(axis=0)
+            ndays += nd // spd
+            mnb = np.clip(((dmin - TMIN) / BINW2).astype(np.int64), 0, nbins2 - 1)
+            mxb = np.clip(((dmax - TMIN) / BINW2).astype(np.int64), 0, nbins2 - 1)
+            idx = np.broadcast_to(incar, mnb.shape)
+            np.add.at(acc2d, (idx.ravel(), mnb.ravel(), mxb.ravel()), 1)
         done = start + n
         if (start // B) % 10 == 0 or done == nT:
             el = time.time() - t0
@@ -189,7 +209,9 @@ def temperature_hist(deg, year, stride, days, nbins):
 
     acc *= hours_per_sample             # samples -> hours
     tmean = tsum / nT                   # mean Celsius per cell
-    return acc.reshape(nlat, nlon, nbins), tmean.reshape(nlat, nlon), nT * hours_per_sample
+    drange = rangesum / max(ndays, 1)   # mean daily range (deg C) per included cell
+    return (acc.reshape(nlat, nlon, nbins), tmean.reshape(nlat, nlon),
+            nT * hours_per_sample, acc2d, drange)
 
 
 # --------------------------------------------------------------------------- #
@@ -207,23 +229,29 @@ def main():
 
     deg = args.deg
     nbins = int(round((TMAX - TMIN) / BINW))
+    nbins2 = int(round((TMAX - TMIN) / BINW2))
     nlat, nlon = int(round(180 / deg)), int(round(360 / deg))
     lat_c = 90 - (np.arange(nlat) + 0.5) * deg   # 89.5 .. -89.5
     lon_c = -180 + (np.arange(nlon) + 0.5) * deg  # -179.5 .. 179.5
 
     pop = population_grid(deg, args.cache)
     cont_idx, cont_names = continent_grid(lat_c, lon_c, args.cache)
-    hist, tmean, hours_total = temperature_hist(deg, args.year, args.stride, args.days, nbins)
 
     land = np.isfinite(cont_idx)
     include = land | (pop > 0)
+    inc_flat = np.where(include.ravel())[0]      # row-major flat indices of kept cells
     cont_idx = fill_missing_continents(cont_idx.copy(), include)
 
+    hist, tmean, hours_total, acc2d, drange = temperature_hist(
+        deg, args.year, args.stride, args.days, nbins, nbins2, inc_flat)
+
     # Emit cells columnar + run-length histograms (first non-zero bin + counts).
+    # daily[] holds each cell's sparse (min,max) day histogram as [key,count,...],
+    # key = minBin * nbins2 + maxBin. Same cell ordering as the columns below.
     lat_i, lon_i = np.where(include)
-    lats, lons, pops, conts, tmeans = [], [], [], [], []
-    t0s, hists = [], []
-    for i, j in zip(lat_i.tolist(), lon_i.tolist()):
+    lats, lons, pops, conts, tmeans, dranges = [], [], [], [], [], []
+    t0s, hists, daily = [], [], []
+    for k, (i, j) in enumerate(zip(lat_i.tolist(), lon_i.tolist())):
         h = hist[i, j]
         nz = np.nonzero(h)[0]
         if nz.size == 0:
@@ -235,8 +263,15 @@ def main():
         c = cont_idx[i, j]
         conts.append(int(c) if np.isfinite(c) else -1)
         tmeans.append(round(float(tmean[i, j]), 1))
+        dranges.append(round(float(drange[k]), 1))
         t0s.append(a)
         hists.append(h[a:b].astype(int).tolist())
+        mn, mx = np.nonzero(acc2d[k])
+        keys = (mn.astype(np.int64) * nbins2 + mx)
+        vals = acc2d[k][mn, mx]
+        kv = np.empty(keys.size * 2, dtype=np.int64)
+        kv[0::2], kv[1::2] = keys, vals
+        daily.append(kv.tolist())
 
     os.makedirs(args.out, exist_ok=True)
     meta = {
@@ -245,6 +280,7 @@ def main():
         "stride_hours": args.stride,
         "hours_total": int(hours_total),
         "tmin": TMIN, "tmax": TMAX, "binw": BINW, "nbins": nbins,
+        "binw2": BINW2, "nbins2": nbins2,
         "continents": cont_names,
         "ncells": len(lats),
         "source": "ERA5 (ARCO-ERA5, ECMWF/Copernicus) + GHS-POP 2020 (EU JRC) "
@@ -254,13 +290,16 @@ def main():
         json.dump(meta, f)
     cells = {
         "lat": lats, "lon": lons, "pop": pops, "cont": conts,
-        "tmean": tmeans, "t0": t0s, "hist": hists,
+        "tmean": tmeans, "drange": dranges, "t0": t0s, "hist": hists,
     }
     with open(os.path.join(args.out, "cells.json"), "w") as f:
         json.dump(cells, f, separators=(",", ":"))
+    with open(os.path.join(args.out, "daily.json"), "w") as f:
+        json.dump({"cell": daily}, f, separators=(",", ":"))
 
-    size = os.path.getsize(os.path.join(args.out, "cells.json"))
-    log(f"Wrote {len(lats)} cells, cells.json = {size/1e6:.1f} MB")
+    csz = os.path.getsize(os.path.join(args.out, "cells.json")) / 1e6
+    dsz = os.path.getsize(os.path.join(args.out, "daily.json")) / 1e6
+    log(f"Wrote {len(lats)} cells, cells.json = {csz:.1f} MB, daily.json = {dsz:.1f} MB")
     log(f"Population represented: {sum(pops)/1e9:.2f} billion")
 
 
