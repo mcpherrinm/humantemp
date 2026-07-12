@@ -10,7 +10,7 @@ const TEMP_STOPS = [
   [224, 243, 248], [255, 255, 191], [254, 224, 144], [253, 174, 97],
   [244, 109, 67], [215, 48, 39], [165, 0, 38],
 ];
-const TEMP_DOMAIN = [-30, 45];
+const TEMP_DOMAIN = [-40, 40]; // symmetric about 0°C: blues negative, reds positive
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
@@ -35,15 +35,17 @@ function grayShade(frac) { // white(0) -> near-black(1); for non-temperature mag
 const RANGE_MAX = 18; // °C, top of the mean-daily-range grayscale
 
 // ---------------------------------------------------------------------------
-// Units. Data is stored in °C; convert only at display time. Absolute
-// temperatures use toDisp; temperature *differences* (daily range) use toDelta.
+// Units. Data is stored in °C and both scales are shown together. Absolute
+// temperatures use toF; a temperature *difference* (daily range) uses toFd
+// (the ×9/5 slope, no +32 offset). cFromF maps a °F tick back to °C for
+// positioning on the °C-based axes.
 // ---------------------------------------------------------------------------
-const toDisp = (c) => (state.unit === "F" ? c * 9 / 5 + 32 : c);
-const fromDisp = (d) => (state.unit === "F" ? (d - 32) * 5 / 9 : d);
-const toDelta = (c) => (state.unit === "F" ? c * 9 / 5 : c);
-const uSym = () => "°" + state.unit;
-const fmtT = (c, dp = 0) => toDisp(c).toFixed(dp) + uSym();
-const fmtD = (c, dp = 0) => toDelta(c).toFixed(dp) + uSym();
+const toF = (c) => c * 9 / 5 + 32;
+const toFd = (c) => c * 9 / 5;
+const cFromF = (f) => (f - 32) * 5 / 9;
+const fmtT = (c, dp = 0) => `${c.toFixed(dp)}°C / ${toF(c).toFixed(dp)}°F`;   // absolute
+const fmtD = (c, dp = 0) => `${c.toFixed(dp)}°C / ${toFd(c).toFixed(dp)}°F`;  // difference
+const fmtThtml = (c, dp = 0) => `${c.toFixed(dp)}°C <span class="alt">${toF(c).toFixed(dp)}°F</span>`;
 
 // ---------------------------------------------------------------------------
 // State
@@ -51,7 +53,6 @@ const fmtD = (c, dp = 0) => toDelta(c).toFixed(dp) + uSym();
 let META, C, N, DAILY;          // metadata, cells (columnar), cell count, daily 2D
 let AREA;                       // per-cell area weight (km^2)
 let state = {
-  unit: "C",                    // 'C' | 'F'
   weight: "pop",                // 'pop' | 'area'
   mapview: "temp",              // 'temp' | 'range' | 'pop'
   continents: new Set(),        // active continent indices
@@ -244,7 +245,7 @@ function drawChart() {
   while (hi > lo && bins[hi] === 0) hi--;
   lo = Math.max(0, lo - 1); hi = Math.min(bins.length - 1, hi + 1);
 
-  const padL = 44, padR = 8, padT = 10, padB = 26;
+  const padL = 44, padR = 8, padT = 22, padB = 26;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   let maxShare = 0;
   for (let b = lo; b <= hi; b++) maxShare = Math.max(maxShare, bins[b] / total);
@@ -280,17 +281,20 @@ function drawChart() {
   ctx.strokeStyle = "rgba(0,0,0,0.22)"; ctx.beginPath();
   ctx.moveTo(xpos(0), padT); ctx.lineTo(xpos(0), padT + plotH); ctx.stroke();
 
-  // x axis: temperature labels in the display unit
+  // x axes: °C along the bottom, °F along the top (both shown at once)
+  const cLo = binTemp(lo), cHi = binTemp(hi);
   ctx.strokeStyle = "#ccc"; ctx.beginPath();
   ctx.moveTo(padL, padT + plotH); ctx.lineTo(w - padR, padT + plotH); ctx.stroke();
   ctx.fillStyle = "#666"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-  const dLo = toDisp(binTemp(lo)), dHi = toDisp(binTemp(hi));
-  const dStep = (dHi - dLo) > 90 ? (state.unit === "F" ? 40 : 20) : (state.unit === "F" ? 20 : 10);
-  for (let td = Math.ceil(dLo / dStep) * dStep; td <= dHi; td += dStep) {
-    ctx.fillText(td + "°", xpos(fromDisp(td)), padT + plotH + 5);
-  }
-  ctx.fillStyle = "#999"; ctx.textAlign = "left";
-  ctx.fillText("air temperature (" + uSym() + ")", padL, padT + plotH + 14);
+  const cStep = (cHi - cLo) > 70 ? 20 : 10;
+  for (let c = Math.ceil(cLo / cStep) * cStep; c <= cHi; c += cStep)
+    ctx.fillText(c + "°", xpos(c), padT + plotH + 5);
+  ctx.textBaseline = "bottom";
+  const fLo = toF(cLo), fHi = toF(cHi), fStep = (fHi - fLo) > 90 ? 40 : 20;
+  for (let f = Math.ceil(fLo / fStep) * fStep; f <= fHi; f += fStep)
+    ctx.fillText(f + "°", xpos(cFromF(f)), padT - 4);
+  ctx.fillStyle = "#999"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText("air temperature — °C below, °F above", padL, padT + plotH + 14);
 
   // symmetric percentile lines: slider P -> lines at (100-P) and P.
   // Labels point inward and sit on two rows so they never overlap or clip.
@@ -341,8 +345,8 @@ function update() {
     ? (selPop() / 1e9).toFixed(2) + " B people"
     : (selArea() / 1e6).toFixed(1) + " M km²";
   const pct = (x) => totPH ? (100 * x / totPH).toFixed(1) + "%" : "–";
-  $("stats").innerHTML = stat(fmtT(mean, 1), "mean temperature experienced")
-    + stat((median == null ? "–" : fmtT(median)), "median")
+  $("stats").innerHTML = stat(fmtThtml(mean, 1), "mean temperature experienced")
+    + stat((median == null ? "–" : fmtThtml(median)), "median")
     + stat(pct(above30), "of " + unit + " above " + fmtT(30))
     + stat(pct(below0), "below " + fmtT(0))
     + stat(totLabel, "in selection");
@@ -354,6 +358,8 @@ function selArea() { let s = 0; for (let k = 0; k < N; k++) if (passes(k)) s += 
 // ---------------------------------------------------------------------------
 // Legend
 // ---------------------------------------------------------------------------
+const cfTick = (c) => `<span>${c | 0}°C<b>${toF(c).toFixed(0)}°F</b></span>`;   // stacked °C / °F
+
 function tempLegend(bar, ticks) {
   const stops = [];
   for (let i = 0; i <= 10; i++) {
@@ -361,15 +367,15 @@ function tempLegend(bar, ticks) {
     stops.push(rgb(c) + " " + i * 10 + "%");
   }
   bar.style.background = `linear-gradient(90deg, ${stops.join(",")})`;
-  const a = toDisp(TEMP_DOMAIN[0]), b = toDisp(TEMP_DOMAIN[1]);
-  ticks.innerHTML = `<span>${a | 0}°</span><span>${(a + b) / 2 | 0}°</span><span>${b | 0}°+</span>`;
+  const a = TEMP_DOMAIN[0], b = TEMP_DOMAIN[1];
+  ticks.innerHTML = cfTick(a) + cfTick((a + b) / 2) + cfTick(b).replace("°F", "°F+");
 }
 
 function updateLegend() {
   const bar = $("legend-bar"), ticks = $("legend-ticks"), label = $("legend-label");
   if (state.hoverBin != null) {
-    const t = binTemp(state.hoverBin);
-    label.textContent = `Where ${toDisp(t - META.binw / 2).toFixed(0)}–${toDisp(t + META.binw / 2).toFixed(0)}${uSym()} is felt`;
+    const t = binTemp(state.hoverBin), lo = t - META.binw / 2, hi = t + META.binw / 2;
+    label.textContent = `Where ${lo.toFixed(0)}–${hi.toFixed(0)}°C / ${toF(lo).toFixed(0)}–${toF(hi).toFixed(0)}°F is felt`;
     tempLegend(bar, ticks);
   } else if (state.mapview === "pop") {
     label.textContent = "Population per cell";
@@ -378,7 +384,7 @@ function updateLegend() {
   } else if (state.mapview === "range") {
     label.textContent = "Mean daily range (high − low)";
     bar.style.background = "linear-gradient(90deg, #fff, #141414)";
-    ticks.innerHTML = `<span>0°</span><span>${toDelta(RANGE_MAX).toFixed(0)}°+</span>`;
+    ticks.innerHTML = `<span>0°</span><span>${fmtD(RANGE_MAX)}+</span>`;
   } else {
     label.textContent = "Mean temperature";
     tempLegend(bar, ticks);
@@ -389,7 +395,6 @@ function updateLegend() {
 // Controls + interaction
 // ---------------------------------------------------------------------------
 function buildControls() {
-  seg("unit", (v) => { state.unit = v; update(); });
   seg("weight", (v) => { state.weight = v; update(); });
   seg("mapview", (v) => { state.mapview = v; drawMap(); });
   const box = $("continents");
@@ -506,7 +511,8 @@ function wireChart() {
     const abs = fmtBig(bins[b], state.weight === "pop" ? "person-hours" : "km²-hours");
     ro.style.opacity = 1;
     ro.style.left = Math.min(g.w - 160, x + 10) + "px";
-    ro.textContent = `${toDisp(binTemp(b) - META.binw / 2).toFixed(0)} to ${toDisp(binTemp(b) + META.binw / 2).toFixed(0)}${uSym()} · ${share.toFixed(1)}% · ${abs}`;
+    const clo = binTemp(b) - META.binw / 2, chi = binTemp(b) + META.binw / 2;
+    ro.textContent = `${clo.toFixed(0)}–${chi.toFixed(0)}°C / ${toF(clo).toFixed(0)}–${toF(chi).toFixed(0)}°F · ${share.toFixed(1)}% · ${abs}`;
   });
   cv.addEventListener("mouseleave", clearHover);
   function clearHover() {
@@ -543,7 +549,7 @@ function drawHeat() {
   const cv = $("heat");
   const nb2 = META.nbins2;
   const { bins, max } = heatBins();
-  const padL = 42, padR = 10, padT = 8, padB = 30;
+  const padL = 42, padR = 32, padT = 24, padB = 30;
   const side = (cv.clientWidth || cv.parentElement.clientWidth) - padL - padR;
   const { ctx, w, h } = fit(cv, side + padT + padB);
   ctx.clearRect(0, 0, w, h);
@@ -578,23 +584,29 @@ function drawHeat() {
   ctx.setLineDash([]);
   ctx.strokeStyle = "#ddd"; ctx.strokeRect(padL, padT, side, side);
 
-  // axes: ticks in display units, freezing lines emphasised
-  ctx.fillStyle = "#666"; ctx.font = "11px system-ui, sans-serif";
-  const dLo = toDisp(binTemp2(gLo)), dHi = toDisp(binTemp2(gHi));
-  const step = state.unit === "F" ? 20 : 10;
+  // dual axes: °C on bottom + left (with gridlines), °F on top + right
+  ctx.font = "11px system-ui, sans-serif";
   const cLo = binTemp2(gLo), cHi = binTemp2(gHi);
-  for (let td = Math.ceil(dLo / step) * step; td <= dHi; td += step) {
-    const c = fromDisp(td), gx = xOf(c), gy = yOf(c);
-    ctx.strokeStyle = td === toDisp(0) ? "rgba(0,0,0,0.18)" : "#f0f0f0";
+  for (let c = Math.ceil(cLo / 10) * 10; c <= cHi; c += 10) {
+    const gx = xOf(c), gy = yOf(c);
+    ctx.strokeStyle = c === 0 ? "rgba(0,0,0,0.18)" : "#f0f0f0";
     ctx.beginPath(); ctx.moveTo(gx, padT); ctx.lineTo(gx, padT + side); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(padL + side, gy); ctx.stroke();
-    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(td + "°", gx, padT + side + 5);
-    ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(td + "°", padL - 5, gy);
+    ctx.fillStyle = "#666";
+    ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillText(c + "°", gx, padT + side + 5);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(c + "°", padL - 5, gy);
+  }
+  ctx.fillStyle = "#aaa";
+  const fLo = toF(cLo), fHi = toF(cHi);
+  for (let f = Math.ceil(fLo / 20) * 20; f <= fHi; f += 20) {
+    const c = cFromF(f), gx = xOf(c), gy = yOf(c);
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom"; ctx.fillText(f + "°", gx, padT - 4);
+    ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText(f + "°", padL + side + 5, gy);
   }
   ctx.fillStyle = "#999"; ctx.textAlign = "center"; ctx.textBaseline = "top";
-  ctx.fillText("daily low (" + uSym() + ")", padL + side / 2, padT + side + 17);
+  ctx.fillText("daily low — °C bottom, °F top", padL + side / 2, padT + side + 17);
   ctx.save(); ctx.translate(11, padT + side / 2); ctx.rotate(-Math.PI / 2);
-  ctx.textBaseline = "middle"; ctx.fillText("daily high (" + uSym() + ")", 0, 0); ctx.restore();
+  ctx.textBaseline = "middle"; ctx.fillText("daily high — °C left, °F right", 0, 0); ctx.restore();
   updateHeatLegend();
 }
 
@@ -617,7 +629,7 @@ function wireHeat() {
     ro.style.opacity = 1;
     ro.style.left = Math.min(g.w - 170, x + 12) + "px";
     ro.style.top = Math.max(4, y - 34) + "px";
-    ro.textContent = `low ${toDisp(lo - META.binw2 / 2).toFixed(0)}–${toDisp(lo + META.binw2 / 2).toFixed(0)}°, high ${toDisp(hi - META.binw2 / 2).toFixed(0)}–${toDisp(hi + META.binw2 / 2).toFixed(0)}° · swing ~${fmtD(hi - lo)} · ${fmtBig(v, state.weight === "pop" ? "people-days" : "km²-days")}`;
+    ro.textContent = `low ${lo.toFixed(0)}°C/${toF(lo).toFixed(0)}°F, high ${hi.toFixed(0)}°C/${toF(hi).toFixed(0)}°F · swing ~${fmtD(hi - lo)} · ${fmtBig(v, state.weight === "pop" ? "people-days" : "km²-days")}`;
   });
   cv.addEventListener("mouseleave", () => { ro.style.opacity = 0; });
 }
